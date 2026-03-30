@@ -1,0 +1,30 @@
+server:
+  port: 8080
+
+spring:
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/intelligent_security?useSSL=false&serverTimezone=UTC&characterEncoding=utf8mb4
+    username: root
+    password: 123456
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQL8Dialect
+  servlet:
+    multipart:
+      max-file-size: 200MB
+      max-request-size: 250MB
+
+app:
+  jwt:
+    secret: change-me-to-a-long-random-string
+    expiration-seconds: 86400
+  recognition:
+    service-token: recognition-secret
+    base-url: http://127.0.0.1:5001
+  uploads:
+    video-dir: d:/intelligent_security_thesis/shared/uploads
+    snapshot-dir: d:/intelligent_security_thesis/shared/snapshots
+

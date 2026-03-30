@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+opencv-python
+numpy
+python-dotenv
+mysql-connector-python
+requests
+Pillow
+insightface
+

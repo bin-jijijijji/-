@@ -1,0 +1,13 @@
+# Java / Maven
+backend/target/
+*.class
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# OS / IDE
+.vscode/
+.idea/
+.DS_Store
