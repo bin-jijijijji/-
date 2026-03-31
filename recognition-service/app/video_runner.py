@@ -4,6 +4,7 @@ import time
 import uuid
 from typing import Dict, Tuple, Any
 from datetime import datetime
+import logging
 
 import cv2
 import numpy as np
@@ -18,6 +19,8 @@ from .config import (
 )
 from .db import fetch_job, fetch_all_face_embeddings, update_job_status
 from .face_engine import FaceEngine
+
+logger = logging.getLogger(__name__)
 
 
 def _roi_contains_bbox_center(roi: Dict[str, float], bbox_xyxy: list[float], frame_w: int, frame_h: int) -> bool:
@@ -48,66 +51,77 @@ def _safe_crop(frame_bgr: np.ndarray, bbox_xyxy: list[float], margin_ratio: floa
 
 class VideoJobRunner:
     def __init__(self):
-        self.face_engine = FaceEngine()
+        self._face_engine = None
+
+    @property
+    def face_engine(self) -> FaceEngine:
+        if self._face_engine is None:
+            self._face_engine = FaceEngine()
+        return self._face_engine
 
     def run(self, job_id: int):
         os.makedirs(SNAPSHOT_DIR, exist_ok=True)
-        job = fetch_job(job_id)
-        if not job:
-            update_job_status(job_id, "FAILED", finished_at=datetime.now())
-            return
-
-        video_path = job["file_path"]
-        threshold = float(job["threshold"])
-
-        roi = {"x1": float(job["x1"]), "y1": float(job["y1"]), "x2": float(job["x2"]), "y2": float(job["y2"])}
-
-        update_job_status(job_id, "RUNNING", started_at=datetime.now())
-
-        # load all embeddings once per job
-        face_entries = fetch_all_face_embeddings()
-        if not face_entries:
-            update_job_status(job_id, "FAILED", finished_at=datetime.now())
-            return
-
-        embedding_matrix = []
-        metas = []
-        for e in face_entries:
-            emb = np.array(e["embedding"], dtype=np.float32)
-            if emb.shape[0] != 512:
-                continue
-            # normalize just in case
-            norm = np.linalg.norm(emb) + 1e-6
-            emb = emb / norm
-            embedding_matrix.append(emb)
-            metas.append({
-                "identityId": e["identityId"],
-                "name": e["name"],
-                "listType": e["listType"],
-            })
-
-        if not embedding_matrix:
-            update_job_status(job_id, "FAILED", finished_at=datetime.now())
-            return
-
-        embedding_matrix = np.stack(embedding_matrix, axis=0)  # (N,512)
-
-        cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            update_job_status(job_id, "FAILED", finished_at=time.strftime("%Y-%m-%d %H:%M:%S"))
-            return
-
-        video_fps = cap.get(cv2.CAP_PROP_FPS)
-        if video_fps is None or video_fps <= 0:
-            video_fps = 25.0
-        frame_skip = max(1, int(round(video_fps / max(0.1, TARGET_FPS))))
-
-        latest_job_status = None
-        cooldown: Dict[Tuple[int, str], float] = {}
-        frame_index = 0
-        processed = 0
-
+        cap = None
         try:
+            job = fetch_job(job_id)
+            if not job:
+                update_job_status(job_id, "FAILED", finished_at=datetime.now())
+                logger.error("job not found, job_id=%s", job_id)
+                return
+
+            video_path = job["file_path"]
+            threshold = float(job["threshold"])
+
+            roi = {"x1": float(job["x1"]), "y1": float(job["y1"]), "x2": float(job["x2"]), "y2": float(job["y2"])}
+
+            update_job_status(job_id, "RUNNING", started_at=datetime.now())
+            logger.info("job started, job_id=%s, video_path=%s, threshold=%s", job_id, video_path, threshold)
+
+            # load all embeddings once per job
+            face_entries = fetch_all_face_embeddings()
+            if not face_entries:
+                update_job_status(job_id, "FAILED", finished_at=datetime.now())
+                logger.error("empty embeddings, job_id=%s", job_id)
+                return
+
+            embedding_matrix = []
+            metas = []
+            for e in face_entries:
+                emb = np.array(e["embedding"], dtype=np.float32)
+                if emb.shape[0] != 512:
+                    continue
+                # normalize just in case
+                norm = np.linalg.norm(emb) + 1e-6
+                emb = emb / norm
+                embedding_matrix.append(emb)
+                metas.append({
+                    "identityId": e["identityId"],
+                    "name": e["name"],
+                    "listType": e["listType"],
+                })
+
+            if not embedding_matrix:
+                update_job_status(job_id, "FAILED", finished_at=datetime.now())
+                logger.error("no valid embeddings, job_id=%s", job_id)
+                return
+
+            embedding_matrix = np.stack(embedding_matrix, axis=0)  # (N,512)
+
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                update_job_status(job_id, "FAILED", finished_at=datetime.now())
+                logger.error("cannot open video, job_id=%s, path=%s", job_id, video_path)
+                return
+
+            video_fps = cap.get(cv2.CAP_PROP_FPS)
+            if video_fps is None or video_fps <= 0:
+                video_fps = 25.0
+            frame_skip = max(1, int(round(video_fps / max(0.1, TARGET_FPS))))
+
+            cooldown: Dict[Tuple[int, str], float] = {}
+            frame_index = 0
+            processed = 0
+
             while True:
                 ret, frame_bgr = cap.read()
                 if not ret:
@@ -175,14 +189,21 @@ class VideoJobRunner:
                                 json=payload,
                                 timeout=10
                             )
-                        except Exception:
+                        except Exception as ex:
                             # if backend is down, still keep processing for thesis demo
-                            pass
+                            logger.warning("event post failed, job_id=%s, err=%s", job_id, ex)
 
                 frame_index += 1
 
+            update_job_status(job_id, "FINISHED", finished_at=datetime.now())
+            logger.info("job finished, job_id=%s, processed_frames=%s", job_id, processed)
+        except Exception:
+            logger.exception("job crashed, mark failed, job_id=%s", job_id)
+            try:
+                update_job_status(job_id, "FAILED", finished_at=datetime.now())
+            except Exception:
+                logger.exception("failed to update failed status, job_id=%s", job_id)
         finally:
-            cap.release()
-
-        update_job_status(job_id, "FINISHED", finished_at=datetime.now())
+            if cap is not None:
+                cap.release()
 

@@ -1,18 +1,27 @@
 import json
+import threading
+from typing import Optional
+
 import mysql.connector
 from mysql.connector import pooling
 
 from .config import DB_CONFIG
 
-
-_pool = pooling.MySQLConnectionPool(
-    pool_name="thesis_recog_pool",
-    pool_size=5,
-    **DB_CONFIG,
-)
+_pool_lock = threading.Lock()
+_pool: Optional[pooling.MySQLConnectionPool] = None
 
 
 def get_conn():
+    global _pool
+    if _pool is None:
+        with _pool_lock:
+            if _pool is None:
+                _pool = pooling.MySQLConnectionPool(
+                    pool_name="thesis_recog_pool",
+                    pool_size=5,
+                    use_pure=True,
+                    **DB_CONFIG,
+                )
     return _pool.get_connection()
 
 

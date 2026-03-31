@@ -355,14 +355,24 @@ const App = {
 
   setupWebSocket() {
     if (this.stompClient) return;
+    const wsStatusEl = document.getElementById('wsStatus');
+    const stompFactory = (window.StompJs && window.StompJs.Stomp) || window.Stomp;
+    if (typeof SockJS === 'undefined' || !stompFactory) {
+      if (wsStatusEl) wsStatusEl.textContent = 'WebSocket: 依赖加载失败（SockJS/Stomp）';
+      return;
+    }
     const sock = new SockJS('/ws');
-    const client = Stomp.over(sock);
+    const client = stompFactory.over(sock);
+    // Disable noisy logs in browser console.
+    client.debug = () => {};
     client.connect({}, () => {
+      if (wsStatusEl) wsStatusEl.textContent = 'WebSocket: 已连接';
       client.subscribe('/topic/alarms', (frame) => {
         const msg = JSON.parse(frame.body);
         this.onAlarm(msg);
       });
     }, (err) => {
+      if (wsStatusEl) wsStatusEl.textContent = 'WebSocket: 连接失败';
       console.warn('WebSocket连接失败', err);
     });
     this.stompClient = client;
@@ -403,7 +413,7 @@ const App = {
     try {
       const roles = localStorage.getItem('roles');
       App.roleNames = roles ? JSON.parse(roles) : [];
-    } catch (e) {}
+    } catch (e) { }
     document.getElementById('loginPanel').style.display = 'none';
     document.getElementById('appPanel').style.display = 'block';
     App.initAfterLogin();

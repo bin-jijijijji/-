@@ -5,17 +5,18 @@ import com.thesis.repo.*;
 import com.thesis.ws.AlarmMessage;
 import com.thesis.ws.AlarmWebSocketPublisher;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 @RestController
 @RequestMapping("/api")
 public class RecognitionEventsController {
+    private static final Logger log = LoggerFactory.getLogger(RecognitionEventsController.class);
 
     private final RecognitionEventRepository eventRepository;
     private final RecognitionJobRepository jobRepository;
@@ -24,8 +25,6 @@ public class RecognitionEventsController {
 
     @Value("${app.recognition.service-token}")
     private String recognitionServiceToken;
-
-    private final long snapshotBase = 0L; // placeholder to keep code simple later
 
     public RecognitionEventsController(
             RecognitionEventRepository eventRepository,
@@ -45,6 +44,7 @@ public class RecognitionEventsController {
             @RequestBody RecognitionEventCreateRequest request
     ) {
         if (token == null || token.isEmpty() || !token.equals(recognitionServiceToken)) {
+            log.warn("recognition event denied by token");
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiResponse.err("recognition token invalid"));
         }
 
@@ -57,6 +57,7 @@ public class RecognitionEventsController {
 
         RecognitionJobEntity job = jobRepository.findById(request.getJobId()).orElse(null);
         if (job == null) {
+            log.warn("recognition event job not found, jobId={}", request.getJobId());
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(ApiResponse.err("job不存在"));
         }
 
@@ -76,6 +77,8 @@ public class RecognitionEventsController {
         entity.setSnapshotPath(normalizeSnapshotPath(request.getSnapshotPath()));
 
         eventRepository.save(entity);
+        log.info("event saved: eventId={}, jobId={}, type={}, matchedName={}, score={}",
+                entity.getId(), job.getId(), entity.getEventType(), entity.getMatchedName(), entity.getScore());
 
         boolean alert = "blacklist_match".equalsIgnoreCase(request.getEventType());
 
@@ -91,6 +94,7 @@ public class RecognitionEventsController {
         msg.setAlert(alert);
 
         publisher.publish(msg);
+        log.info("event pushed: eventId={}, topic=/topic/alarms", entity.getId());
 
         return ResponseEntity.ok(ApiResponse.ok(null));
     }

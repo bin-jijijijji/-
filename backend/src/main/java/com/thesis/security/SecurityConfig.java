@@ -31,19 +31,20 @@ public class SecurityConfig {
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
-                                antMatcher("/api/auth/login"),
-                                antMatcher("/assets/**"),
                                 antMatcher("/"),
                                 antMatcher("/index.html"),
-                                antMatcher("/static/**"),
+                                antMatcher("/favicon.ico"),
+                                antMatcher("/*.js"),
+                                antMatcher("/*.css"),
+                                antMatcher("/api/auth/login"),
                                 antMatcher("/ws/**"),
-                                antMatcher("/sockjs-node/**")
-                        ).permitAll()
-                        .anyRequest().authenticated()
-                )
+                                antMatcher("/sockjs-node/**"),
+                                antMatcher("/files/videos/**"), // 新增
+                                antMatcher("/files/snapshots/**")) // 新增
+                        .permitAll()
+                        .anyRequest().authenticated())
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
 }
-

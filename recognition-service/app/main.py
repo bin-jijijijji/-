@@ -1,18 +1,24 @@
-import threading
+import logging
 from typing import List, Optional
 
 from fastapi import FastAPI, BackgroundTasks, Header, HTTPException
 from pydantic import BaseModel
 
 from .config import RECOGNITION_TOKEN
-from .face_engine import FaceEngine
 from .db import ingest_identity_and_embeddings
 from .video_runner import VideoJobRunner
 
 app = FastAPI(title="recognition-service")
+logger = logging.getLogger(__name__)
 
-_runner = VideoJobRunner()
-_face_engine = FaceEngine()
+_runner: Optional[VideoJobRunner] = None
+
+
+def get_runner() -> VideoJobRunner:
+    global _runner
+    if _runner is None:
+        _runner = VideoJobRunner()
+    return _runner
 
 
 class IdentityIngestModel(BaseModel):
@@ -45,11 +51,12 @@ def ingest_identity(
     if not payload.imagePaths or len(payload.imagePaths) == 0:
         raise HTTPException(status_code=400, detail="imagePaths不能为空")
 
+    runner = get_runner()
     face_identity_id, inserted = ingest_identity_and_embeddings(
         name=safe_name,
         list_type=safe_type,
         image_paths=payload.imagePaths,
-        face_engine=_face_engine,
+        face_engine=runner.face_engine,
     )
 
     return {"ok": True, "faceIdentityId": face_identity_id, "inserted": inserted}
@@ -64,7 +71,8 @@ def run_job(
     if recognition_token is None or recognition_token != RECOGNITION_TOKEN:
         raise HTTPException(status_code=403, detail="Recognition-Token invalid")
 
+    runner = get_runner()
     # 后台跑（避免HTTP超时）
-    background_tasks.add_task(_runner.run, job_id)
+    background_tasks.add_task(runner.run, job_id)
     return {"ok": True, "jobId": job_id}
 

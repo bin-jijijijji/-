@@ -12,6 +12,8 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -19,6 +21,7 @@ import java.util.Optional;
 @RestController
 @RequestMapping("/api")
 public class JobsController {
+    private static final Logger log = LoggerFactory.getLogger(JobsController.class);
 
     private final RecognitionJobRepository jobRepository;
     private final VideoAssetRepository videoAssetRepository;
@@ -92,11 +95,14 @@ public class JobsController {
         headers.add("Recognition-Token", recognitionToken);
         HttpEntity<Void> entity = new HttpEntity<>(headers);
 
-        // We don't block on long processing: assume recognition-service starts processing quickly.
         try {
             restTemplate.exchange(url, HttpMethod.POST, entity, String.class);
         } catch (Exception e) {
-            // service may be down; keep job record but mark failed later.
+            log.warn("failed to trigger recognition-service, jobId={}, url={}", job.getId(), url, e);
+            job.setStatus("FAILED");
+            job.setFinishedAt(LocalDateTime.now());
+            jobRepository.save(job);
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(ApiResponse.err("识别服务不可用，任务已标记失败"));
         }
 
         JobView v = new JobView();
